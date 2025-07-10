@@ -257,8 +257,8 @@ class SimplifiedDashboard:
             selected_month = data[data['year'] == selected_year]['month'].max()
             selected_metric = list(available_metrics.keys())[0]
         
-        # Two-column layout
-        col1, col2 = st.columns([1, 1])
+        # Two-column layout with better proportions
+        col1, col2 = st.columns([1.2, 0.8])
         
         with col1:
             st.markdown("### Historical Trends")
@@ -289,6 +289,24 @@ class SimplifiedDashboard:
                 scatterplot_fig, _, _ = components['chart_viz'].create_scatterplot(data, selected_year, selected_month)
                 if scatterplot_fig:
                     st.plotly_chart(scatterplot_fig, use_container_width=True)
+                    
+                    # Add interpretation helper for sectors
+                    if st.session_state.admin_level == 'sectors':
+                        st.markdown("""
+                        **Quadrant Analysis Guide:**
+                        - **⭐ Star**: Highest population sector
+                        - **🔺 Triangle**: Highest incidence sector
+                        - **Top Right**: High population + High incidence → Priority intervention
+                        - **Bottom Right**: High population + Low incidence → Maintain prevention
+                        """)
+                    else:
+                        st.markdown("""
+                        **Quadrant Analysis Guide:**
+                        - **⭐ Star**: Highest total cases district
+                        - **🔺 Triangle**: Highest severe cases district
+                        - **Top Right**: High cases + High severity → Immediate action
+                        - **Bottom Right**: High cases + Low severity → Enhance treatment
+                        """)
     
     def _render_overview_cards(self, current_data: gpd.GeoDataFrame, all_data: gpd.GeoDataFrame, year: int, month: int):
         """Render overview metric cards with new 3-box design"""
@@ -335,22 +353,46 @@ class SimplifiedDashboard:
             prev_district = prev_data[prev_data['District'] == district] if not prev_data.empty else pd.DataFrame()
             
             if not current_district.empty:
-                if selected_metric == 'all cases incidence':
-                    current_val = current_district['all cases incidence'].iloc[0]
-                    prev_val = prev_district['all cases incidence'].iloc[0] if not prev_district.empty else current_val
-                    change = current_val - prev_val
-                    change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
-                    metric_name = "incidence"
-                    current_display = f"{current_val:.1f}"
-                else:  # Default to 'all cases'
-                    current_val = current_district['all cases'].iloc[0]
-                    prev_val = prev_district['all cases'].iloc[0] if not prev_district.empty else current_val
-                    change = current_val - prev_val
-                    change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
-                    metric_name = "cases"
-                    current_display = f"{int(current_val)}"
-                
-                district_changes.append({
+                try:
+                    if selected_metric == 'all cases incidence':
+                        current_val = current_district['all cases incidence'].iloc[0]
+                        prev_val = prev_district['all cases incidence'].iloc[0] if not prev_district.empty else current_val
+                        change = current_val - prev_val
+                        change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
+                        metric_name = "case/1000"
+                        current_display = f"{current_val:.1f}"
+                    elif selected_metric == 'Severe cases/Deaths incidence':
+                        current_val = current_district['Severe cases/Deaths incidence'].iloc[0]
+                        prev_val = prev_district['Severe cases/Deaths incidence'].iloc[0] if not prev_district.empty else current_val
+                        change = current_val - prev_val
+                        change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
+                        metric_name = "case/1000"
+                        current_display = f"{current_val:.1f}"
+                    elif selected_metric == 'Severe cases/Deaths':
+                        current_val = current_district['Severe cases/Deaths'].iloc[0]
+                        prev_val = prev_district['Severe cases/Deaths'].iloc[0] if not prev_district.empty else current_val
+                        change = current_val - prev_val
+                        change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
+                        metric_name = "severe cases"
+                        current_display = f"{int(current_val)}"
+                    else:  # Default to 'all cases'
+                        current_val = current_district['all cases'].iloc[0]
+                        prev_val = prev_district['all cases'].iloc[0] if not prev_district.empty else current_val
+                        change = current_val - prev_val
+                        change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
+                        metric_name = "cases"
+                        current_display = f"{int(current_val)}"
+                    
+                    district_changes.append({
+                        'District': district,
+                        'change': change,
+                        'change_pct': change_pct,
+                        'metric_name': metric_name,
+                        'current_display': current_display
+                    })
+                except (KeyError, IndexError, ValueError) as e:
+                    # Skip districts with missing data
+                    continued({
                     'District': district,
                     'change': change,
                     'change_pct': change_pct,
@@ -385,26 +427,32 @@ class SimplifiedDashboard:
             if not df_changes.empty:
                 top_increases = df_changes.nlargest(3, 'change')  # Sort by raw change, not percentage
                 
-                for _, row in top_increases.iterrows():
-                    increase_pct = row['change_pct']
-                    bg_color = 'rgba(40, 167, 69, 0.3)' if increase_pct <= 0 else 'rgba(220, 53, 69, 0.3)'
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: {bg_color};
-                        padding: 1.2rem;
-                        border-radius: 10px;
-                        margin-bottom: 0.5rem;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                    ">
-                        <strong style="flex: 1; color: white; font-size: 18px;">{row['District']}</strong>
-                        <span style="color: white; text-align: right; font-size: 17px;">
-                            {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
-                        </span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                if top_increases.empty:
+                    st.info("No increase data available for selected metric")
+                else:
+                    for _, row in top_increases.iterrows():
+                        # FIXED: Use actual change value, not percentage for color logic
+                        change_val = row['change']
+                        bg_color = 'rgba(220, 53, 69, 0.3)' if change_val > 0 else 'rgba(40, 167, 69, 0.3)'
+                        
+                        st.markdown(f"""
+                        <div style="
+                            background: {bg_color};
+                            padding: 1.2rem;
+                            border-radius: 10px;
+                            margin-bottom: 0.5rem;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                        ">
+                            <strong style="flex: 1; color: white; font-size: 18px;">{row['District']}</strong>
+                            <span style="color: white; text-align: right; font-size: 17px;">
+                                {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
+                            </span>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No district data available to display increases")
         
         # Column 3: Biggest Decreases
         with col3:
@@ -413,26 +461,32 @@ class SimplifiedDashboard:
             if not df_changes.empty:
                 top_decreases = df_changes.nsmallest(3, 'change')  # Sort by raw change, not percentage
                 
-                for _, row in top_decreases.iterrows():
-                    decrease_pct = row['change_pct']
-                    bg_color = 'rgba(40, 167, 69, 0.3)' if decrease_pct <= 0 else 'rgba(220, 53, 69, 0.3)'
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: {bg_color};
-                        padding: 1.2rem;
-                        border-radius: 10px;
-                        margin-bottom: 0.5rem;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                    ">
-                        <strong style="flex: 1; color: white; font-size: 18px;">{row['District']}</strong>
-                        <span style="color: white; text-align: right; font-size: 17px;">
-                            {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
-                        </span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                if top_decreases.empty:
+                    st.info("No decrease data available for selected metric")
+                else:
+                    for _, row in top_decreases.iterrows():
+                        # FIXED: Use actual change value, not percentage for color logic  
+                        change_val = row['change']
+                        bg_color = 'rgba(40, 167, 69, 0.3)' if change_val < 0 else 'rgba(220, 53, 69, 0.3)'
+                        
+                        st.markdown(f"""
+                        <div style="
+                            background: {bg_color};
+                            padding: 1.2rem;
+                            border-radius: 10px;
+                            margin-bottom: 0.5rem;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                        ">
+                            <strong style="flex: 1; color: white; font-size: 18px;">{row['District']}</strong>
+                            <span style="color: white; text-align: right; font-size: 17px;">
+                                {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
+                            </span>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No district data available to display decreases")
 
     def _render_sector_overview_cards(self, col1, col2, col3, current_data, prev_data, selected_metric, year, month):
         """Render sector overview cards"""
@@ -461,28 +515,32 @@ class SimplifiedDashboard:
                 (prev_data['District'] == sector_row['District'])
             ] if not prev_data.empty else pd.DataFrame()
             
-            if selected_metric == 'incidence':
-                current_val = sector_row['incidence']
-                prev_val = prev_sector_data['incidence'].iloc[0] if not prev_sector_data.empty else current_val
-                change = current_val - prev_val
-                change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
-                metric_name = "incidence"
-                current_display = f"{current_val:.1f}"
-            else:  # Default to 'Simple malaria cases'
-                current_val = sector_row['Simple malaria cases']
-                prev_val = prev_sector_data['Simple malaria cases'].iloc[0] if not prev_sector_data.empty else current_val
-                change = current_val - prev_val
-                change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
-                metric_name = "cases"
-                current_display = f"{int(current_val)}"
-            
-            sector_changes.append({
-                'Sector': sector_name,
-                'change': change,
-                'change_pct': change_pct,
-                'metric_name': metric_name,
-                'current_display': current_display
-            })
+            try:
+                if selected_metric == 'incidence':
+                    current_val = sector_row['incidence']
+                    prev_val = prev_sector_data['incidence'].iloc[0] if not prev_sector_data.empty else current_val
+                    change = current_val - prev_val
+                    change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
+                    metric_name = "case/1000"
+                    current_display = f"{current_val:.1f}"
+                else:  # Default to 'Simple malaria cases'
+                    current_val = sector_row['Simple malaria cases']
+                    prev_val = prev_sector_data['Simple malaria cases'].iloc[0] if not prev_sector_data.empty else current_val
+                    change = current_val - prev_val
+                    change_pct = ((change / prev_val) * 100) if prev_val > 0 else 0
+                    metric_name = "cases"
+                    current_display = f"{int(current_val)}"
+                
+                sector_changes.append({
+                    'Sector': sector_name,
+                    'change': change,
+                    'change_pct': change_pct,
+                    'metric_name': metric_name,
+                    'current_display': current_display
+                })
+            except (KeyError, IndexError, ValueError) as e:
+                # Skip sectors with missing data
+                continue
         
         df_changes = pd.DataFrame(sector_changes)
         
@@ -511,26 +569,32 @@ class SimplifiedDashboard:
             if not df_changes.empty:
                 top_increases = df_changes.nlargest(3, 'change')  # Sort by raw change, not percentage
                 
-                for _, row in top_increases.iterrows():
-                    increase_pct = row['change_pct']
-                    bg_color = 'rgba(40, 167, 69, 0.3)' if increase_pct <= 0 else 'rgba(220, 53, 69, 0.3)'
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: {bg_color};
-                        padding: 1.2rem;
-                        border-radius: 10px;
-                        margin-bottom: 0.5rem;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                    ">
-                        <strong style="flex: 1; color: white; font-size: 18px;">{row['Sector']}</strong>
-                        <span style="color: white; text-align: right; font-size: 17px;">
-                            {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
-                        </span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                if top_increases.empty:
+                    st.info("No increase data available for selected metric")
+                else:
+                    for _, row in top_increases.iterrows():
+                        # FIXED: Use actual change value, not percentage for color logic
+                        change_val = row['change']
+                        bg_color = 'rgba(220, 53, 69, 0.3)' if change_val > 0 else 'rgba(40, 167, 69, 0.3)'
+                        
+                        st.markdown(f"""
+                        <div style="
+                            background: {bg_color};
+                            padding: 1.2rem;
+                            border-radius: 10px;
+                            margin-bottom: 0.5rem;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                        ">
+                            <strong style="flex: 1; color: white; font-size: 18px;">{row['Sector']}</strong>
+                            <span style="color: white; text-align: right; font-size: 17px;">
+                                {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
+                            </span>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No sector data available to display increases")
         
         # Column 3: Biggest Decreases
         with col3:
@@ -539,26 +603,32 @@ class SimplifiedDashboard:
             if not df_changes.empty:
                 top_decreases = df_changes.nsmallest(3, 'change')  # Sort by raw change, not percentage
                 
-                for _, row in top_decreases.iterrows():
-                    decrease_pct = row['change_pct']
-                    bg_color = 'rgba(40, 167, 69, 0.3)' if decrease_pct <= 0 else 'rgba(220, 53, 69, 0.3)'
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: {bg_color};
-                        padding: 1.2rem;
-                        border-radius: 10px;
-                        margin-bottom: 0.5rem;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                    ">
-                        <strong style="flex: 1; color: white; font-size: 18px;">{row['Sector']}</strong>
-                        <span style="color: white; text-align: right; font-size: 17px;">
-                            {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
-                        </span>
-                    </div>
-                    """, unsafe_allow_html=True)
+                if top_decreases.empty:
+                    st.info("No decrease data available for selected metric")
+                else:
+                    for _, row in top_decreases.iterrows():
+                        # FIXED: Use actual change value, not percentage for color logic  
+                        change_val = row['change']
+                        bg_color = 'rgba(40, 167, 69, 0.3)' if change_val < 0 else 'rgba(220, 53, 69, 0.3)'
+                        
+                        st.markdown(f"""
+                        <div style="
+                            background: {bg_color};
+                            padding: 1.2rem;
+                            border-radius: 10px;
+                            margin-bottom: 0.5rem;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                        ">
+                            <strong style="flex: 1; color: white; font-size: 18px;">{row['Sector']}</strong>
+                            <span style="color: white; text-align: right; font-size: 17px;">
+                                {row['current_display']} {row['metric_name']} ({row['change']:+,.0f})
+                            </span>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info("No sector data available to display decreases")
     
     def run(self):
         """Main execution function"""

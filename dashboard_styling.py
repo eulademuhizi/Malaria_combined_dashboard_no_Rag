@@ -256,14 +256,14 @@ class DashboardStyling:
                          style="height: 120px; width: auto; margin-bottom: 1rem;">
                 </div>
                 <div class="dashboard-title">Rwanda Malaria Surveillance Dashboard</div>
-                <div class="dashboard-subtitle">Advanced Analytics & Predictive Intelligence</div>
+                <div class="dashboard-subtitle"></div>
             </div>
             """
         else:
             header_html = """
             <div class="main-header">
                 <div class="dashboard-title">🦟 Rwanda Malaria Surveillance Dashboard</div>
-                <div class="dashboard-subtitle">Advanced Analytics & Predictive Intelligence</div>
+                <div class="dashboard-subtitle"></div>
             </div>
             """
         
